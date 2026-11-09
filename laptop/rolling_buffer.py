@@ -29,7 +29,7 @@ class RollingBuffer():
             else:
                 self.sample_count = 0
                 accel = np.array(self.accel)
-                gyro = np.array(self.gyro)  
+                gyro = np.array(self.gyro)
 
                 return (accel, gyro)         
 
