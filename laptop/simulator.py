@@ -9,8 +9,8 @@ MODES = {
                "gyro_base": 2.0,  "gyro_amp": 0.0,   "gyro_freq": 0.0, "gyro_noise": 1.0},
     "TREMOR": {"accel_amp": 0.08, "accel_freq": 5.0, "accel_noise": 0.01,
                "gyro_base": 15.0, "gyro_amp": 10.0,  "gyro_freq": 5.0, "gyro_noise": 2.0},
-    "REACH":  {"accel_amp": 0.4,  "accel_freq": 1.0, "accel_noise": 0.02,
-               "gyro_base": 150.0, "gyro_amp": 100.0, "gyro_freq": 1.0, "gyro_noise": 10.0},
+    "REACH": {"accel_amp": 0.4,  "accel_freq": 1.0, "accel_noise": 0.02,
+               "gyro_base": 120.0, "gyro_amp": 80.0, "gyro_freq": 1.0, "gyro_noise": 8.0},
 }
 
 def make_samples(mode: str, n0: int, rng) -> list[tuple[float, float]]:
@@ -35,7 +35,7 @@ def make_samples(mode: str, n0: int, rng) -> list[tuple[float, float]]:
 
 class Simulator:
     def __init__(self, mode: str = 'IDLE', seed: int | None = None, drop_prob: float = 0.0):
-        if not 0.0 <= drop_prob <= 1.0:
+        if not 0.0 <= drop_prob < 1.0:
             raise ValueError(f"drop_prob must be between 0 and 1, got {drop_prob}")
         self.mode = mode                      # this goes through the setter below
         self.drop_prob = drop_prob
