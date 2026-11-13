@@ -42,7 +42,7 @@ def main():
             spectrum = np.abs(np.fft.rfft(x))     # complex -> magnitudes
             k = np.argmax(spectrum[1:]) + 1       # skip bin 0, then undo the shift
             peaks.append(k * 100 / 256)           # bin -> Hz
-            sleep(0.02)
+        sleep(0.02)
 
     stop.set()
     t_stop = monotonic()
