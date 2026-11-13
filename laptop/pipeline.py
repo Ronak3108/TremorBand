@@ -2,9 +2,9 @@ import numpy as np
 import threading
 from time import monotonic, sleep
 
-from rolling_buffer import RollingBuffer
-from protocol import parse_packet
-from simulator import Simulator
+from .rolling_buffer import RollingBuffer
+from .protocol import parse_packet
+from .simulator import Simulator
 
 def reader(source, buf: RollingBuffer, stop, errors):
     try:

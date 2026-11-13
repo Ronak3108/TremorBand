@@ -1,7 +1,7 @@
 import numpy as np
 import argparse
 from time import monotonic, sleep
-from protocol import SAMPLES_PER_PACKET, PERIOD, SAMPLE_RATE_HZ, SEQ_MOD, pack_packet, parse_packet
+from .protocol import SAMPLES_PER_PACKET, PERIOD, SAMPLE_RATE_HZ, SEQ_MOD, pack_packet, parse_packet
 
 # This is the parameter dict for all the modes.
 MODES = {

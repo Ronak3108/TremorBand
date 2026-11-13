@@ -1,7 +1,7 @@
 import numpy as np
 import threading
 from collections import deque
-from protocol import SAMPLES_PER_PACKET
+from .protocol import SAMPLES_PER_PACKET
 
 
 class RollingBuffer():

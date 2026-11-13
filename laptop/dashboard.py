@@ -3,17 +3,17 @@ import numpy as np
 import matplotlib.pyplot as plt
 import time
 
-from rolling_buffer import RollingBuffer
-from pipeline import reader
-from simulator import Simulator
-from stubs import compute_spectrum, detect_tremor, detect_action
+from .rolling_buffer import RollingBuffer
+from .pipeline import reader
+from .simulator import Simulator
+from dsp import ActionDetector, compute_spectrum, detect_action, detect_tremor
 
 
 def main():
     rb = RollingBuffer()
     stop = threading.Event()
     errors = []
-    sim = Simulator('REACH', seed=1, drop_prob = 0)
+    sim = Simulator('TREMOR', seed=1, drop_prob = 0)
     buffer_thread = threading.Thread(target=reader, kwargs={'source': sim.packets(), 'buf': rb, 'stop': stop, 'errors': errors}, daemon=True)
 
     fig, (ax_wave, ax_spec) = plt.subplots(2, 1)
