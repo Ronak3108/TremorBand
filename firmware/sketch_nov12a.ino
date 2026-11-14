@@ -22,7 +22,7 @@ struct __attribute__((packed)) Sample {
 struct __attribute__((packed)) TremorPacket {
   uint16_t seq;
   Sample samples[4];
-  uint16_t padding;
+  // Removed the 2-byte padding so the packet is exactly 18 bytes
 };
 
 class MyServerCallbacks: public BLEServerCallbacks {
@@ -43,12 +43,11 @@ void writeRegister(uint8_t reg, uint8_t data) {
 }
 
 void sensorSamplingTask(void *pvParameters) {
-  const TickType_t xFrequency = 10 / portTICK_PERIOD_MS; // 10ms = 100 Hz
+  const TickType_t xFrequency = 10 / portTICK_PERIOD_MS;
   TickType_t xLastWakeTime = xTaskGetTickCount();
 
   TremorPacket txPacket;
   txPacket.seq = 0;
-  txPacket.padding = 0;
   uint8_t sampleIndex = 0;
 
   for (;;) {
@@ -69,31 +68,23 @@ void sensorSamplingTask(void *pvParameters) {
       int16_t gy = (Wire.read() << 8) | Wire.read();
       int16_t gz = (Wire.read() << 8) | Wire.read();
 
-      // Accel magnitude in milli-g
       float raw_accel = sqrt((float)ax * ax + (float)ay * ay + (float)az * az);
       txPacket.samples[sampleIndex].accel_mag = (uint16_t)round((raw_accel * 1000.0f) / 16384.0f);
 
-      // Gyro magnitude in 0.1 deg/s
       float raw_gyro = sqrt((float)gx * gx + (float)gy * gy + (float)gz * gz);
       txPacket.samples[sampleIndex].gyro_mag = (uint16_t)round((raw_gyro * 10.0f) / 131.0f);
 
       sampleIndex++;
 
-      // When 4 samples are gathered (every 40ms), notify over BLE
+      // ONLY notify when 4 samples are gathered (exactly every 40ms)
       if (sampleIndex >= 4) {
         if (deviceConnected) {
           pCharacteristic->setValue((uint8_t*)&txPacket, sizeof(txPacket));
           pCharacteristic->notify();
         }
-        txPacket.seq += 4; // Advance sequence count by 4 samples
+        txPacket.seq += 4; 
         sampleIndex = 0;
       }
-    }
-
-    if (deviceConnected) {
-      pCharacteristic->setValue((uint8_t*)&txPacket, sizeof(txPacket));
-      pCharacteristic->notify();
-      Serial.println("Sent real packet!"); // <-- ADD THIS LINE
     }
   }
 }
