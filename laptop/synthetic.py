@@ -1,15 +1,3 @@
-"""Physically-motivated synthetic recordings (rest / tremor / reach / typing / walking) for 3 'subjects'.
-
-Purpose: test laptop/calibrate.py and choose PROVISIONAL thresholds before the real S3 session.
-These are NOT real data - every number below is an assumption, documented where it is used.
-
-    python -m laptop.synthetic            # writes data/synthetic/<label>_<subject>.csv
-
-Model: a 3-axis acceleration + 3-axis angular rate are simulated, then reduced exactly like the firmware does
-(|accel| in g incl. gravity, |gyro| in deg/s), quantised like the packet (1 mg, 0.1 deg/s) and written as CSV.
-Because only the magnitude is sent, motion perpendicular to gravity barely changes |accel| (first-order),
-which is why `tilt` below scales the visible accel amplitude.
-"""
 import argparse
 from pathlib import Path
 
