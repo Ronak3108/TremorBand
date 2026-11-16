@@ -24,24 +24,22 @@ class BleReceiver:
         self.scan_timeout = scan_timeout
         self.status = "Starting..."
 
-        # counters (plain ints, read by other threads for display)
-        self.notifications = 0            # every notification received, before cleaning up
-        self.packets_delivered = 0        # packets handed to the pipeline
+        self.notifications = 0
+        self.packets_delivered = 0
         self.delivered_this_connection = 0
-        self.duplicates_collapsed = 0     # earlier copies of a seq that were replaced by a later one
-        self.packets_lost = 0             # from gaps in seq
-        self.resyncs = 0                  # seq went backwards / sideways (band restarted)
-        self.bad_packets = 0              # too short to be a packet
+        self.duplicates_collapsed = 0
+        self.packets_lost = 0
+        self.resyncs = 0
+        self.bad_packets = 0
         self.connections = 0
 
         self._queue = queue.Queue()
         self._stop = threading.Event()
         self._thread = None
-        self._pending = None              # newest packet seen, held until a different seq arrives
+        self._pending = None
         self._pending_seq = None
         self._last_seq = None
 
-    # ---------------------------------------------------------------- public
     def start(self):
         self._thread = threading.Thread(target=self._thread_main, daemon=True, name="ble")
         self._thread.start()
@@ -58,13 +56,24 @@ class BleReceiver:
         except queue.Empty:
             return None
 
-    def packets(self):
-        """Endless packet source for reader(); ends after close()."""
+    def flush(self):
+        """Discard packets that are queued but not yet consumed."""
+        while True:
+            try:
+                self._queue.get_nowait()
+            except queue.Empty:
+                return
+
+    def packets(self, duration=None):
+        """Endless packet source for reader(); ends after close(), or after `duration` seconds if given."""
+        deadline = None if duration is None else time.monotonic() + duration
         while True:
             packet = self.get(0.1)
             if packet is not None:
                 yield packet
             elif self._stop.is_set():
+                return
+            if deadline is not None and time.monotonic() >= deadline:
                 return
 
     @property
@@ -84,11 +93,10 @@ class BleReceiver:
             "bad_packets": self.bad_packets,
         }
 
-    # ------------------------------------------------- background asyncio thread
     def _thread_main(self):
         try:
             asyncio.run(self._run())
-        except Exception as e:  # nothing here should escape, but never die silently
+        except Exception as e:
             self.status = f"Bluetooth error: {e}"
 
     async def _run(self):
@@ -97,7 +105,7 @@ class BleReceiver:
                 self.status = STATUS_SCANNING
                 device = await self._find_device()
                 if device is None:
-                    continue                      # not found in this scan: scan again
+                    continue
                 self.status = STATUS_CONNECTING
                 lost_link = asyncio.Event()
                 async with BleakClient(device, disconnected_callback=lambda _c: lost_link.set()) as client:
@@ -113,7 +121,7 @@ class BleReceiver:
                     self.status = STATUS_RECONNECTING
             except Exception as e:
                 self.status = f"Bluetooth error: {e}"
-                await self._sleep(2.0)            # e.g. adapter off; try again shortly
+                await self._sleep(2.0)
 
     async def _sleep(self, seconds):
         end = time.monotonic() + seconds
@@ -126,7 +134,7 @@ class BleReceiver:
         for _address, (device, adv) in found.items():
             names = {n for n in (adv.local_name, device.name) if n}
             uuids = {u.lower() for u in (adv.service_uuids or [])}
-            if self.name in names or SERVICE_UUID in uuids:     # match the name OR the service UUID
+            if self.name in names or SERVICE_UUID in uuids:
                 if best is None or (adv.rssi or -999) > (best[1].rssi or -999):
                     best = (device, adv)
         return best[0] if best else None
@@ -134,8 +142,8 @@ class BleReceiver:
     def _new_connection(self):
         self.connections += 1
         self.delivered_this_connection = 0
-        self._pending = None          # a half-received packet from the old link is useless
-        self._last_seq = None         # the band keeps counting while we are away: no "loss" to report
+        self._pending = None
+        self._last_seq = None
 
     def _on_notify(self, _characteristic, data):
         self.notifications += 1
@@ -143,14 +151,15 @@ class BleReceiver:
         if len(data) < PACKET_SIZE:
             self.bad_packets += 1
             return
-        packet = data[:PACKET_SIZE]   # the band sends 20 bytes; the last 2 are padding
+        packet = data[:PACKET_SIZE]
         seq = int.from_bytes(packet[:2], "little")
 
+        # hold each packet until a different seq arrives, so repeated notifications of one seq collapse to the last
         if self._pending is not None:
             if seq != self._pending_seq:
-                self._deliver(self._pending_seq, self._pending)   # a new seq: the held one was the final copy
+                self._deliver(self._pending_seq, self._pending)
             else:
-                self.duplicates_collapsed += 1                    # same seq again: newer copy replaces it
+                self.duplicates_collapsed += 1
         self._pending, self._pending_seq = packet, seq
 
     def _deliver(self, seq, packet):
@@ -168,7 +177,6 @@ class BleReceiver:
         self._queue.put(packet)
 
 
-# ---------------------------------------------------------------- command line
 def main():
     parser = argparse.ArgumentParser(description="Receive from the TremorBand and print values / link stats")
     parser.add_argument("-s", "--seconds", type=float, default=None, help="stop after this long (default: Ctrl-C)")

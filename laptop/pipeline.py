@@ -3,17 +3,37 @@ import threading
 from time import monotonic, sleep
 
 from .rolling_buffer import RollingBuffer
-from .protocol import parse_packet
+from .protocol import SAMPLES_PER_PACKET, SEQ_MOD, parse_packet
 from .simulator import Simulator
 
+MAX_FILL_SAMPLES = 100
+
+
 def reader(source, buf: RollingBuffer, stop, errors):
+    """Feed packets into the buffer, interpolating short gaps and clearing it after a restart or long outage."""
+    last_seq = None
+    last_sample = None
     try:
         for packet in source:
             if stop.is_set():
                 break
 
             seq, samples = parse_packet(packet)
+            if last_seq is not None:
+                step = (seq - last_seq) % SEQ_MOD
+                missing = step - SAMPLES_PER_PACKET
+                if step == 0 or step > SEQ_MOD // 2:
+                    buf.clear()  # duplicate or backwards seq: the band restarted
+                elif missing > MAX_FILL_SAMPLES:
+                    buf.clear()  # outage too long to bridge
+                elif missing > 0 and last_sample is not None:
+                    # linearly interpolate the lost samples
+                    a0, g0 = last_sample
+                    a1, g1 = samples[0]
+                    t = np.arange(1, missing + 1) / (missing + 1)
+                    buf.push([(a0 + (a1 - a0) * f, g0 + (g1 - g0) * f) for f in t])
             buf.push(samples)
+            last_seq, last_sample = seq, samples[-1]
 
     except Exception as e:
         errors.append(e)
@@ -28,8 +48,8 @@ def main():
     buffer_thread = threading.Thread(target=reader, kwargs={'source': sim.packets(), 'buf': rb, 'stop': stop, 'errors': errors}, daemon=True)
     buffer_thread.start()
 
-    times = []   # seconds since the loop started, one per window
-    peaks = []   # peak frequency (Hz) of each window
+    times = []
+    peaks = []
 
     t0 = monotonic()
     while monotonic() - t0 < 20:
@@ -38,10 +58,10 @@ def main():
             accel, gyro = window
             times.append(monotonic() - t0)
 
-            x = accel - accel.mean()              # remove gravity
-            spectrum = np.abs(np.fft.rfft(x))     # complex -> magnitudes
-            k = np.argmax(spectrum[1:]) + 1       # skip bin 0, then undo the shift
-            peaks.append(k * 100 / 256)           # bin -> Hz
+            x = accel - accel.mean()
+            spectrum = np.abs(np.fft.rfft(x))
+            k = np.argmax(spectrum[1:]) + 1
+            peaks.append(k * 100 / 256)
         sleep(0.02)
 
     stop.set()
@@ -62,5 +82,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-        

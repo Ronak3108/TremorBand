@@ -1,35 +1,31 @@
+"""List nearby BLE devices and say whether the TremorBand is among them."""
 import asyncio
+
 from bleak import BleakScanner
 
-async def main():
-    device_found = False
+DEVICE_NAME = "TremorBand"
+SERVICE_UUID = "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
 
-    name = "TremorBand"
+
+async def main():
     devices = await BleakScanner.discover(timeout=5.0, return_adv=True)
 
-    devices_info = []
-    for address, (device, adv_data) in devices.items():
-        devices_info.append((adv_data.local_name or "Unknown", address, adv_data.rssi))
+    rows, found = [], False
+    for address, (device, adv) in devices.items():
+        name = adv.local_name or device.name or "Unknown"
+        uuids = {u.lower() for u in (adv.service_uuids or [])}
+        is_band = name == DEVICE_NAME or SERVICE_UUID in uuids
+        found = found or is_band
+        rows.append((name, address, adv.rssi if adv.rssi is not None else -999, is_band))
 
-    devices_info = sorted(devices_info, key=lambda x: x[2], reverse=True)
-
-    # Print the Header Row
+    rows.sort(key=lambda r: r[2], reverse=True)
     print(f"{'Device Name':<25} {'MAC Address':<20} {'RSSI':>8}")
-    print("-" * 55)  # Separator line
+    print("-" * 55)
+    for name, address, rssi, is_band in rows:
+        print(f"{name:<25} {address:<20} {f'{rssi} dBm':>8}{'   <-- TremorBand' if is_band else ''}")
 
-    # Print the Data Rows
-    for name, address, rssi in devices_info:
-    # Using string representation for RSSI to add "dBm" text seamlessly
-        rssi_str = f"{rssi} dBm"
-        print(f"{name:<25} {address:<20} {rssi_str:>8}")
-
-        if(name == "TremorBand"):
-            device_found = True
-
-    if(device_found):
-        print("TremorBand Detected...")
-    else:
-        print("TremorBand Not Found...")
+    print("TremorBand Detected..." if found else "TremorBand Not Found...")
 
 
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())

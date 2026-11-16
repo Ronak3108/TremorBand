@@ -3,15 +3,14 @@ import csv
 import time
 from pathlib import Path
 
-from .protocol import SAMPLE_RATE_HZ, SAMPLES_PER_PACKET, pack_packet, parse_packet
+from .protocol import SAMPLE_RATE_HZ, SAMPLES_PER_PACKET, SEQ_MOD, pack_packet, parse_packet
 from .rolling_buffer import RollingBuffer
 from .simulator import Simulator
 
 HEADER = ["t_ms", "accel_g", "gyro_dps", "label"]
-SAMPLE_MS = 1000 / SAMPLE_RATE_HZ  # 10 ms between samples
+SAMPLE_MS = 1000 / SAMPLE_RATE_HZ
 
 
-# ------------------------------------------------------------------
 class Recorder:
     """Writes every packet that passes through tee() to a CSV file."""
 
@@ -20,7 +19,8 @@ class Recorder:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.label = label
         self.samples_written = 0
-        self._t0 = None
+        self._last_seq = None
+        self._index = 0
         self._file = open(self.path, "w", newline="")
         self._writer = csv.writer(self._file, lineterminator="\n")
         self._writer.writerow(HEADER)
@@ -33,25 +33,28 @@ class Recorder:
             yield packet
 
     def _write(self, packet):
-        arrival = time.monotonic()
-        _, samples = parse_packet(packet)
-        if self._t0 is None:
-            # make the very first sample t = 0
-            self._t0 = arrival - (SAMPLES_PER_PACKET - 1) * SAMPLE_MS / 1000
-        packet_end_ms = (arrival - self._t0) * 1000
+        """Timestamp each sample from the packet's sequence number (10 ms per sample).
+
+        A repeated or backwards seq (the band restarted) continues the timeline after the previous packet.
+        """
+        seq, samples = parse_packet(packet)
+        if self._last_seq is not None:
+            step = (seq - self._last_seq) % SEQ_MOD
+            if step == 0 or step > SEQ_MOD // 2:
+                step = SAMPLES_PER_PACKET
+            self._index += step
+        self._last_seq = seq
         for i, (accel, gyro) in enumerate(samples):
-            # the packet arrives when its last sample was taken; earlier ones are 10 ms apart
-            t_ms = packet_end_ms - (SAMPLES_PER_PACKET - 1 - i) * SAMPLE_MS
+            t_ms = (self._index + i) * SAMPLE_MS
             self._writer.writerow([f"{t_ms:.1f}", f"{accel:.3f}", f"{gyro:.1f}", self.label])
         self.samples_written += len(samples)
-        self._file.flush()  # a crash or Ctrl-C loses at most one packet
+        self._file.flush()
 
     def close(self):
         if not self._file.closed:
             self._file.close()
 
 
-# ------------------------------------------------------------------ replay
 def load_rows(path):
     """Read a recording -> ([(t_ms, accel_g, gyro_dps), ...], label)."""
     path = Path(path)
@@ -76,12 +79,9 @@ def load_rows(path):
 
 
 def replay_packets(path, loop=False, realtime=True):
-    """Turn a recording back into packets, paced by the t_ms column.
+    """Turn a recording back into 18-byte packets, paced by the t_ms column (realtime=False skips the pacing).
 
-    The file is read and checked right away (so a bad file fails before any thread
-    starts); the returned generator then yields the same 18-byte packets the
-    simulator or the band would. realtime=False skips the waiting (for verify).
-    A trailing partial packet (rows not a multiple of 4) is dropped.
+    The file is validated immediately; a trailing partial packet is dropped.
     """
     rows, _ = load_rows(path)
     n_packets = len(rows) // SAMPLES_PER_PACKET
@@ -99,7 +99,7 @@ def replay_packets(path, loop=False, realtime=True):
                     if wait > 0:
                         time.sleep(wait)
                 yield pack_packet(seq, [(a, g) for _, a, g in chunk])
-                seq += SAMPLES_PER_PACKET  # pack_packet wraps it at 65536
+                seq += SAMPLES_PER_PACKET
             if not loop:
                 return
 
@@ -110,7 +110,6 @@ def csv_label(path):
     return load_rows(path)[1]
 
 
-# ------------------------------------------------------------------ verify
 def verify(path):
     """Replay a file at full speed and check it round-trips exactly."""
     rows, label = load_rows(path)
@@ -143,35 +142,63 @@ def verify(path):
     return got == expected
 
 
-# ------------------------------------------------------------------ command line
 def _record_cli(args):
-    sim = Simulator(args.mode, seed=args.seed)
+    receiver = None
+    if args.ble:
+        from .ble_receiver import BleReceiver
+        receiver = BleReceiver()
+        receiver.start()
+        what = "TremorBand"
+        print("Waiting for the band...", end="", flush=True)
+        while not receiver.connected:
+            time.sleep(0.2)
+        print(" connected.")
+    else:
+        sim = Simulator(args.mode, seed=args.seed)
+        what = f"simulator {args.mode}"
+    if args.countdown:
+        for n in range(args.countdown, 0, -1):
+            print(f"  starting in {n}...", end="\r", flush=True)
+            time.sleep(1)
+    if receiver:
+        receiver.flush()
+        source = receiver.packets(duration=args.seconds)
+    else:
+        source = sim.packets()
     rec = Recorder(args.path, args.label)
+    print(f"RECORDING '{args.label or '(no label)'}' for {args.seconds:.0f} s ...")
     t0 = time.monotonic()
     try:
-        for _ in rec.tee(sim.packets()):
+        for _ in rec.tee(source):
             if time.monotonic() - t0 >= args.seconds:
                 break
     finally:
         rec.close()
-    print(f"Recorded {rec.samples_written} samples ({args.mode}) to {rec.path}")
+        if receiver:
+            receiver.close()
+    print(f"Recorded {rec.samples_written} samples ({what}) to {rec.path}")
+    if receiver:
+        link = receiver.stats()
+        print(f"Link: lost {link['lost_packets']} packets ({link['lost_percent']:.2f}%)")
 
 
 def _verify_cli(args):
     if not verify(args.path):
-        raise SystemExit(1)  # non-zero exit so scripts can notice a bad file
+        raise SystemExit(1)
 
 
 def main():
     parser = argparse.ArgumentParser(description="Record / verify TremorBand CSV recordings")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
-    p_rec = sub.add_parser("record", help="record the simulator (headless) to a CSV")
+    p_rec = sub.add_parser("record", help="record the simulator (or, with --ble, the real band) headless to a CSV")
     p_rec.add_argument("path")
     p_rec.add_argument("-m", "--mode", default="TREMOR", help="IDLE, TREMOR or REACH")
     p_rec.add_argument("-s", "--seconds", type=float, default=20.0)
     p_rec.add_argument("-l", "--label", default="")
     p_rec.add_argument("--seed", type=int, default=None)
+    p_rec.add_argument("--ble", action="store_true", help="record the real TremorBand instead of the simulator")
+    p_rec.add_argument("--countdown", type=int, default=0, help="seconds to wait after connecting (time to get your hand in position)")
     p_rec.set_defaults(func=_record_cli)
 
     p_ver = sub.add_parser("verify", help="check that a recording replays exactly")

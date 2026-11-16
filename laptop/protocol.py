@@ -14,27 +14,24 @@ SCALE_ACC = 1000
 SCALE_GYRO = 10
 
 
-
 assert PACKET_SIZE == 18, f"Packet size is not {PACKET_SIZE} bytes."
 
 def to_u16(value, scale):
     return round(max(0, min(value * scale, U16_MAX)))
 
 
-
 def pack_packet(seq: int, values: list[tuple[float, float]]) -> bytes:
     if len(values) != SAMPLES_PER_PACKET:
         raise ValueError(f"The No. of Samples received is not {SAMPLES_PER_PACKET}.")
-    
+
     data_array = [seq % SEQ_MOD]
     for (a, g) in values:
         a_scaled = to_u16(a, SCALE_ACC)
         g_scaled = to_u16(g, SCALE_GYRO)
         data_array.append(a_scaled)
         data_array.append(g_scaled)
-    
-    return struct.pack(PACKET_FMT, *data_array)
 
+    return struct.pack(PACKET_FMT, *data_array)
 
 
 def parse_packet(packet: bytes) -> tuple[int, list[tuple[float, float]]]:
@@ -58,4 +55,3 @@ if __name__ == "__main__":
     print(f"data to be packed: {data}")
     print(f"packed data: {packet.hex(' ')}")
     print(f"data after unpacking: {parse_packet(packet)}")
-

@@ -3,7 +3,6 @@ import argparse
 from time import monotonic, sleep
 from .protocol import SAMPLES_PER_PACKET, PERIOD, SAMPLE_RATE_HZ, SEQ_MOD, pack_packet, parse_packet
 
-# This is the parameter dict for all the modes.
 MODES = {
     "IDLE":   {"accel_amp": 0.0,  "accel_freq": 0.0, "accel_noise": 0.01,
                "gyro_base": 2.0,  "gyro_amp": 0.0,   "gyro_freq": 0.0, "gyro_noise": 1.0},
@@ -14,7 +13,7 @@ MODES = {
 }
 
 def make_samples(mode: str, n0: int, rng) -> list[tuple[float, float]]:
-    
+
     accel_amp = MODES[mode]["accel_amp"]
     accel_freq = MODES[mode]['accel_freq']
     accel_noise = MODES[mode]["accel_noise"]
@@ -37,7 +36,7 @@ class Simulator:
     def __init__(self, mode: str = 'IDLE', seed: int | None = None, drop_prob: float = 0.0):
         if not 0.0 <= drop_prob < 1.0:
             raise ValueError(f"drop_prob must be between 0 and 1, got {drop_prob}")
-        self.mode = mode                      # this goes through the setter below
+        self.mode = mode
         self.drop_prob = drop_prob
         self.rng = np.random.default_rng(seed)
 
@@ -54,7 +53,7 @@ class Simulator:
 
     def packets(self):
         packet_count = 0
-        t0 = monotonic()        # Capturing the start time
+        t0 = monotonic()
 
         while True:
             n0 = packet_count * SAMPLES_PER_PACKET
@@ -86,13 +85,13 @@ def main():
         sim = Simulator(args.mode, args.seed)
 
     start_time = monotonic()
-    prev_seq = -SAMPLES_PER_PACKET   # "the packet before packet 0": a first packet with seq 0 then counts as a normal step of 4
+    prev_seq = -SAMPLES_PER_PACKET
     prev_time = None
     max_diff_seq = 0
     packet_count = 0
     lost_count = 0
-    spacings_ms = []                 # time between back-to-back packets (no loss in between)
- 
+    spacings_ms = []
+
     for packet in sim.packets():
         current_time = monotonic()
         if current_time - start_time > args.seconds:
@@ -101,17 +100,17 @@ def main():
             packet_count += 1
             data = parse_packet(packet)
             seq = data[0]
-            diff = (seq - prev_seq) % SEQ_MOD           # modulo, so the 65535 -> 0 wrap is not a "negative jump"
+            diff = (seq - prev_seq) % SEQ_MOD
             max_diff_seq = max(max_diff_seq, diff)
-            lost_count += diff // SAMPLES_PER_PACKET - 1  # a jump of 8 means 1 packet vanished, 12 means 2, ...
+            lost_count += diff // SAMPLES_PER_PACKET - 1
             if diff == SAMPLES_PER_PACKET and prev_time is not None:
                 spacings_ms.append((current_time - prev_time) * 1000)
             prev_seq = seq
             prev_time = current_time
- 
+
     elapsed = monotonic() - start_time
     total_laps = packet_count + lost_count
- 
+
     print("|-----SUMMARY-----|")
     print(f"Mode: {sim.mode} | seed: {args.seed} | drop_prob: {sim.drop_prob}")
     print(f"Elapsed: {elapsed:.2f} s")
@@ -122,11 +121,7 @@ def main():
     if spacings_ms:
         print(f"Back-to-back spacing: mean {np.mean(spacings_ms):.3f} ms, std {np.std(spacings_ms):.3f} ms, "
               f"max {np.max(spacings_ms):.2f} ms (ideal {PERIOD * 1000:.0f} ms)")
-    
-
 
 
 if __name__ == "__main__":
     main()
-    
-    

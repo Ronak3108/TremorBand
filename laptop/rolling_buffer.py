@@ -20,19 +20,25 @@ class RollingBuffer():
             self.sample_count += len(samples)
             self.accel.extend(accel_samples)
             self.gyro.extend(gyro_samples)
-        # print(self.accel, self.gyro)
+
+    def clear(self):
+        # Discard all buffered samples.
+        with self.thread_lock:
+            self.accel.clear()
+            self.gyro.clear()
+            self.sample_count = 0
 
     def get_window(self):
         with self.thread_lock:
             if(len(self.accel) != self.window or len(self.gyro) != self.window or self.sample_count < self.hop):
                 return None
             else:
-                self.sample_count = 0
+                # keeping the remainder so consecutive windows stay exactly `hop` samples apart
+                self.sample_count = (self.sample_count - self.hop) % self.hop
                 accel = np.array(self.accel)
                 gyro = np.array(self.gyro)
 
-                return (accel, gyro)         
-
+                return (accel, gyro)
 
 
 if __name__ == "__main__":
@@ -48,5 +54,3 @@ if __name__ == "__main__":
     rb.push([(9, 9), (10, 10), (11, 11), (12, 12)])
     print("Accessing window...")
     print(rb.get_window())
-    
-
